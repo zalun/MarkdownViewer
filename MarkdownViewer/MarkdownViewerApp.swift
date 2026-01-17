@@ -65,6 +65,24 @@ struct MarkdownViewerApp: App {
                 }
                 .keyboardShortcut("r", modifiers: .command)
             }
+            CommandGroup(after: .textEditing) {
+                Divider()
+
+                Button("Find...") {
+                    appDelegate.showFindBar()
+                }
+                .keyboardShortcut("f", modifiers: .command)
+
+                Button("Find Next") {
+                    appDelegate.findNext()
+                }
+                .keyboardShortcut("g", modifiers: .command)
+
+                Button("Find Previous") {
+                    appDelegate.findPrevious()
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+            }
             CommandGroup(after: .toolbar) {
                 Button("Zoom In") {
                     appDelegate.zoomIn()
@@ -198,6 +216,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func resetZoom() {
         activeDocumentState()?.resetZoom()
+    }
+
+    func showFindBar() {
+        activeDocumentState()?.showFindBar()
+    }
+
+    func findNext() {
+        activeDocumentState()?.findNext()
+    }
+
+    func findPrevious() {
+        activeDocumentState()?.findPrevious()
     }
 
     func selectNextTab() {
@@ -433,6 +463,10 @@ class DocumentState: ObservableObject {
     @Published var outlineItems: [OutlineItem] = []
     @Published var reloadToken: UUID?
     @Published var zoomLevel: CGFloat = 1.0
+    @Published var isShowingFindBar: Bool = false
+    @Published var findQuery: String = ""
+    @Published var findRequest: FindRequest?
+    @Published var findFocusToken: UUID = UUID()
     var currentURL: URL?
     private var fileMonitor: DispatchSourceFileSystemObject?
     private var lastModificationDate: Date?
@@ -546,6 +580,32 @@ class DocumentState: ObservableObject {
         zoomLevel = 1.0
     }
 
+    func showFindBar() {
+        let wasShowing = isShowingFindBar
+        isShowingFindBar = true
+        findFocusToken = UUID()
+        if !wasShowing {
+            updateFindResults()
+        }
+    }
+
+    func hideFindBar() {
+        isShowingFindBar = false
+        clearFindHighlights()
+    }
+
+    func updateFindResults() {
+        requestFind(direction: .forward, reset: true)
+    }
+
+    func findNext() {
+        requestFind(direction: .forward, reset: false)
+    }
+
+    func findPrevious() {
+        requestFind(direction: .backward, reset: false)
+    }
+
     private func startMonitoring(url: URL) {
         stopMonitoring()
 
@@ -578,6 +638,19 @@ class DocumentState: ObservableObject {
     private func stopMonitoring() {
         fileMonitor?.cancel()
         fileMonitor = nil
+    }
+
+    private func requestFind(direction: FindDirection, reset: Bool) {
+        let trimmed = findQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            findRequest = FindRequest(query: "", direction: .forward, token: UUID(), reset: true)
+            return
+        }
+        findRequest = FindRequest(query: trimmed, direction: direction, token: UUID(), reset: reset)
+    }
+
+    private func clearFindHighlights() {
+        findRequest = FindRequest(query: "", direction: .forward, token: UUID(), reset: true)
     }
 
     private func wrapInHTML(_ body: String, title: String) -> String {
@@ -765,11 +838,157 @@ class DocumentState: ObservableObject {
                     color: var(--color-fg-default);
                     font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
                 }
+                mark.mv-find-match {
+                    background-color: #fff3b0;
+                    color: #111111;
+                    border-radius: 2px;
+                }
+                mark.mv-find-active {
+                    background-color: #ffd24d;
+                }
             </style>
         </head>
         <body>
             \(body)
             <script>hljs.highlightAll();</script>
+            <script>
+                (function() {
+                    var state = {
+                        query: "",
+                        matches: [],
+                        index: -1
+                    };
+
+                    function clearHighlights() {
+                        var marks = document.querySelectorAll("mark.mv-find-match");
+                        for (var i = 0; i < marks.length; i++) {
+                            var mark = marks[i];
+                            var parent = mark.parentNode;
+                            if (!parent) {
+                                continue;
+                            }
+                            parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                            parent.normalize();
+                        }
+                        state.matches = [];
+                        state.index = -1;
+                    }
+
+                    function collectTextNodes() {
+                        var nodes = [];
+                        var walker = document.createTreeWalker(
+                            document.body,
+                            NodeFilter.SHOW_TEXT,
+                            {
+                                acceptNode: function(node) {
+                                    if (!node.nodeValue || !node.nodeValue.trim()) {
+                                        return NodeFilter.FILTER_REJECT;
+                                    }
+                                    var parent = node.parentNode;
+                                    if (!parent) {
+                                        return NodeFilter.FILTER_REJECT;
+                                    }
+                                    if (parent.closest("script, style, mark")) {
+                                        return NodeFilter.FILTER_REJECT;
+                                    }
+                                    return NodeFilter.FILTER_ACCEPT;
+                                }
+                            }
+                        );
+                        var current = walker.nextNode();
+                        while (current) {
+                            nodes.push(current);
+                            current = walker.nextNode();
+                        }
+                        return nodes;
+                    }
+
+                    function highlightAll(query) {
+                        clearHighlights();
+                        state.query = query;
+                        if (!query) {
+                            return;
+                        }
+                        var lowerQuery = query.toLowerCase();
+                        var nodes = collectTextNodes();
+                        for (var i = 0; i < nodes.length; i++) {
+                            var node = nodes[i];
+                            var text = node.nodeValue;
+                            var fragment = document.createDocumentFragment();
+                            var lowerText = text.toLowerCase();
+                            var startIndex = 0;
+                            var matchIndex = lowerText.indexOf(lowerQuery, startIndex);
+                            if (matchIndex === -1) {
+                                continue;
+                            }
+                            while (matchIndex !== -1) {
+                                var endIndex = matchIndex + query.length;
+                                if (matchIndex > startIndex) {
+                                    fragment.appendChild(document.createTextNode(text.slice(startIndex, matchIndex)));
+                                }
+                                var mark = document.createElement("mark");
+                                mark.className = "mv-find-match";
+                                mark.textContent = text.slice(matchIndex, endIndex);
+                                fragment.appendChild(mark);
+                                state.matches.push(mark);
+                                startIndex = endIndex;
+                                matchIndex = lowerText.indexOf(lowerQuery, startIndex);
+                            }
+                            if (startIndex < text.length) {
+                                fragment.appendChild(document.createTextNode(text.slice(startIndex)));
+                            }
+                            node.parentNode.replaceChild(fragment, node);
+                        }
+                        if (state.matches.length > 0) {
+                            state.index = 0;
+                            updateActive();
+                        }
+                    }
+
+                    function updateActive() {
+                        if (state.matches.length === 0 || state.index < 0) {
+                            return;
+                        }
+                        for (var i = 0; i < state.matches.length; i++) {
+                            if (i === state.index) {
+                                state.matches[i].classList.add("mv-find-active");
+                            } else {
+                                state.matches[i].classList.remove("mv-find-active");
+                            }
+                        }
+                        var target = state.matches[state.index];
+                        if (target && target.scrollIntoView) {
+                            target.scrollIntoView({ block: "center", inline: "nearest" });
+                        }
+                    }
+
+                    function step(direction) {
+                        if (state.matches.length === 0) {
+                            return;
+                        }
+                        if (direction === "backward") {
+                            state.index = (state.index - 1 + state.matches.length) % state.matches.length;
+                        } else {
+                            state.index = (state.index + 1) % state.matches.length;
+                        }
+                        updateActive();
+                    }
+
+                    window.__markdownViewerFind = function(payload) {
+                        if (!payload) {
+                            return;
+                        }
+                        var query = payload.query || "";
+                        var direction = payload.direction || "forward";
+                        var reset = Boolean(payload.reset);
+                        if (reset || query !== state.query) {
+                            highlightAll(query);
+                        } else {
+                            step(direction);
+                        }
+                    };
+                })();
+            </script>
         </body>
         </html>
         """
@@ -1003,27 +1222,41 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    WebView(htmlContent: documentState.htmlContent, scrollRequest: scrollRequest, reloadToken: documentState.reloadToken, zoomLevel: documentState.zoomLevel)
+                    WebView(htmlContent: documentState.htmlContent, scrollRequest: scrollRequest, reloadToken: documentState.reloadToken, zoomLevel: documentState.zoomLevel, findRequest: documentState.findRequest)
                 }
             }
 
-            if documentState.fileChanged {
-                Button(action: {
-                    documentState.reload()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("File changed")
-                            .font(.system(size: 11, weight: .medium))
+            if documentState.fileChanged || documentState.isShowingFindBar {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if documentState.fileChanged {
+                        Button(action: {
+                            documentState.reload()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 11, weight: .medium))
+                                Text("File changed")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.orange.opacity(0.9))
+                            .foregroundColor(.white)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.orange.opacity(0.9))
-                    .foregroundColor(.white)
-                    .cornerRadius(6)
+
+                    if documentState.isShowingFindBar {
+                        FindBar(
+                            query: $documentState.findQuery,
+                            focusToken: documentState.findFocusToken,
+                            onNext: { documentState.findNext() },
+                            onPrevious: { documentState.findPrevious() },
+                            onClose: { documentState.hideFindBar() }
+                        )
+                    }
                 }
-                .buttonStyle(.plain)
                 .padding(12)
             }
         }
@@ -1033,6 +1266,19 @@ struct ContentView: View {
             window.tabbingMode = .preferred
             window.documentState = documentState
         })
+        .onChange(of: documentState.findQuery) { _ in
+            documentState.updateFindResults()
+        }
+        .onChange(of: documentState.htmlContent) { _ in
+            if documentState.isShowingFindBar {
+                documentState.updateFindResults()
+            }
+        }
+        .onExitCommand {
+            if documentState.isShowingFindBar {
+                documentState.hideFindBar()
+            }
+        }
         .overlay(alignment: .trailing) {
             ZStack(alignment: .trailing) {
                 Color.clear
@@ -1126,9 +1372,84 @@ struct OutlineRow: View {
     }
 }
 
+struct FindBar: View {
+    @Binding var query: String
+    let focusToken: UUID
+    let onNext: () -> Void
+    let onPrevious: () -> Void
+    let onClose: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            TextField("Find", text: $query)
+                .textFieldStyle(.plain)
+                .frame(width: 200)
+                .focused($isFocused)
+                .onSubmit {
+                    onNext()
+                }
+            Button(action: onPrevious) {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.plain)
+            Button(action: onNext) {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.plain)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(NSColor.separatorColor))
+        )
+        .cornerRadius(8)
+        .shadow(radius: 6)
+        .onAppear {
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onChange(of: focusToken) { _ in
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
+        .onExitCommand {
+            onClose()
+        }
+    }
+}
+
 struct ScrollRequest: Equatable {
     let id: String
     let token: UUID
+}
+
+enum FindDirection: Equatable {
+    case forward
+    case backward
+}
+
+struct FindRequest: Equatable {
+    let query: String
+    let direction: FindDirection
+    let token: UUID
+    let reset: Bool
+}
+
+struct FindPayload: Encodable {
+    let query: String
+    let direction: String
+    let reset: Bool
 }
 
 struct WebView: NSViewRepresentable {
@@ -1136,6 +1457,7 @@ struct WebView: NSViewRepresentable {
     let scrollRequest: ScrollRequest?
     let reloadToken: UUID?
     let zoomLevel: CGFloat
+    let findRequest: FindRequest?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -1175,6 +1497,10 @@ struct WebView: NSViewRepresentable {
             let percentage = Int(zoomLevel * 100)
             webView.evaluateJavaScript("document.body.style.zoom = '\(percentage)%'", completionHandler: nil)
         }
+
+        if let request = findRequest {
+            context.coordinator.requestFind(request, in: webView)
+        }
     }
 
     class Coordinator: NSObject, WKNavigationDelegate {
@@ -1186,6 +1512,8 @@ struct WebView: NSViewRepresentable {
         var lastReloadToken: UUID?
         var savedScrollY: CGFloat = 0
         var lastZoomLevel: CGFloat = 1.0
+        var pendingFindRequest: FindRequest?
+        var lastFindToken: UUID?
 
         func requestScroll(_ request: ScrollRequest, in webView: WKWebView) {
             guard request.token != lastHandledToken else { return }
@@ -1215,6 +1543,7 @@ struct WebView: NSViewRepresentable {
             }
 
             performScroll(in: webView)
+            performFind(in: webView)
         }
 
         private func performScroll(in webView: WKWebView) {
@@ -1228,6 +1557,30 @@ struct WebView: NSViewRepresentable {
                 .replacingOccurrences(of: "'", with: "\\'")
             let script = "var el = document.getElementById('\(escaped)'); if (el) { el.scrollIntoView(); }"
             webView.evaluateJavaScript(script, completionHandler: nil)
+        }
+
+        func requestFind(_ request: FindRequest, in webView: WKWebView) {
+            guard request.token != lastFindToken else { return }
+            lastFindToken = request.token
+            pendingFindRequest = request
+            if !isLoading {
+                performFind(in: webView)
+            }
+        }
+
+        private func performFind(in webView: WKWebView) {
+            guard let request = pendingFindRequest else { return }
+            pendingFindRequest = nil
+            let payload = FindPayload(
+                query: request.query,
+                direction: request.direction == .backward ? "backward" : "forward",
+                reset: request.reset
+            )
+            guard let data = try? JSONEncoder().encode(payload),
+                  let json = String(data: data, encoding: .utf8) else {
+                return
+            }
+            webView.evaluateJavaScript("window.__markdownViewerFind(\(json));", completionHandler: nil)
         }
     }
 }

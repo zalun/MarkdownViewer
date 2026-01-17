@@ -12,6 +12,7 @@
 - `swift run MarkdownViewer` runs the app from source for local development.
 - `./build.sh` builds a release binary and creates a signed-ready `.app` bundle in the repo root.
 - `swift build -c release` is the underlying release build used by `build.sh`.
+- After implementing a change successfully, run `./build.sh` so the user can test the change.
 
 ## Coding Style & Naming Conventions
 - Follow Swift API Design Guidelines and mirror existing code style in `MarkdownViewer/MarkdownViewerApp.swift`.
