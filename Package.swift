@@ -20,6 +20,11 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
+        ),
+        .testTarget(
+            name: "MarkdownViewerTests",
+            dependencies: ["MarkdownViewer"],
+            path: "Tests/MarkdownViewerTests"
         )
     ]
 )
