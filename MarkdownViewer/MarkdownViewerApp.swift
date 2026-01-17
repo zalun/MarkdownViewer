@@ -1273,7 +1273,7 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .topTrailing) {
-            if canShowOutline || documentState.fileChanged || documentState.isShowingFindBar {
+            if documentState.fileChanged || documentState.isShowingFindBar {
                 VStack(alignment: .trailing, spacing: 8) {
                     if documentState.fileChanged {
                         Button(action: {
@@ -1303,29 +1303,26 @@ struct ContentView: View {
                             onClose: { documentState.hideFindBar() }
                         )
                     }
-
-                    if canShowOutline {
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isOutlinePinned.toggle()
-                            }
-                        }) {
-                            Image(systemName: "sidebar.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(isOutlinePinned ? .accentColor : .secondary)
-                                .padding(6)
-                        }
-                        .buttonStyle(.plain)
-                        .background(Color(NSColor.windowBackgroundColor).opacity(0.95))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(NSColor.separatorColor))
-                        )
-                        .cornerRadius(6)
-                        .help(isOutlinePinned ? "Hide Table of Contents" : "Show Table of Contents")
-                    }
                 }
                 .padding(12)
+            }
+        }
+        .toolbar {
+            if canShowOutline {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isOutlinePinned.toggle()
+                        }
+                    }) {
+                        Label("Table of Contents", systemImage: "sidebar.right")
+                            .labelStyle(.iconOnly)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.secondary)
+                    .symbolVariant(isOutlinePinned ? .fill : .none)
+                    .help(isOutlinePinned ? "Hide Table of Contents" : "Show Table of Contents")
+                }
             }
         }
     }
