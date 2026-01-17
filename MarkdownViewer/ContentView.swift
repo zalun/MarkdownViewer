@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var isHoveringSidebar = false
     @State private var isOutlinePinned = false
     @State private var scrollRequest: ScrollRequest?
+    @State private var activeAnchorID: String?
 
     init(documentState: DocumentState = DocumentState()) {
         _documentState = StateObject(wrappedValue: documentState)
@@ -45,7 +46,10 @@ struct ContentView: View {
                 scrollRequest: scrollRequest,
                 reloadToken: documentState.reloadToken,
                 zoomLevel: documentState.zoomLevel,
-                findRequest: documentState.findRequest
+                findRequest: documentState.findRequest,
+                onActiveAnchorChange: { anchorID in
+                    activeAnchorID = anchorID
+                }
             )
         }
     }
@@ -55,7 +59,7 @@ struct ContentView: View {
             documentView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showPinnedOutline {
-                OutlineSidebar(items: documentState.outlineItems) { item in
+                OutlineSidebar(items: documentState.outlineItems, activeAnchorID: activeAnchorID) { item in
                     scrollRequest = ScrollRequest(id: item.anchorID, token: UUID())
                 }
                 .transition(.move(edge: .trailing))
@@ -91,7 +95,7 @@ struct ContentView: View {
                         }
 
                     if showFloatingOutline {
-                        OutlineSidebar(items: documentState.outlineItems) { item in
+                        OutlineSidebar(items: documentState.outlineItems, activeAnchorID: activeAnchorID) { item in
                             scrollRequest = ScrollRequest(id: item.anchorID, token: UUID())
                         }
                         .onHover { hovering in

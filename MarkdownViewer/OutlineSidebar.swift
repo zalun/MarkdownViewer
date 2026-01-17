@@ -3,6 +3,7 @@ import SwiftUI
 
 struct OutlineSidebar: View {
     let items: [OutlineItem]
+    let activeAnchorID: String?
     let onSelect: (OutlineItem) -> Void
 
     var body: some View {
@@ -13,7 +14,11 @@ struct OutlineSidebar: View {
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(items) { item in
-                        OutlineRow(item: item, onSelect: onSelect)
+                        OutlineRow(
+                            item: item,
+                            isActive: item.anchorID == activeAnchorID,
+                            onSelect: onSelect
+                        )
                     }
                 }
             }
@@ -34,6 +39,7 @@ struct OutlineSidebar: View {
 
 struct OutlineRow: View {
     let item: OutlineItem
+    let isActive: Bool
     let onSelect: (OutlineItem) -> Void
 
     private var indent: CGFloat {
@@ -52,6 +58,14 @@ struct OutlineRow: View {
         item.level <= 2 ? .primary : .secondary
     }
 
+    private var activeTextColor: Color {
+        isActive ? .accentColor : textColor
+    }
+
+    private var activeBackground: Color {
+        isActive ? Color.accentColor.opacity(0.18) : .clear
+    }
+
     var body: some View {
         Button(action: {
             onSelect(item)
@@ -59,12 +73,17 @@ struct OutlineRow: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(item.title)
                     .font(.system(size: fontSize, weight: fontWeight))
-                    .foregroundColor(textColor)
+                    .foregroundColor(activeTextColor)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 2)
             .padding(.leading, indent)
+            .padding(.trailing, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(activeBackground)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
