@@ -182,6 +182,10 @@ ul.task-list {
 .task-list-item p {
     display: inline;
 }
+.task-list-item.cancelled p {
+    text-decoration: line-through;
+    color: var(--color-fg-muted);
+}
 .mermaid {
     margin-top: 0;
     margin-bottom: 16px;
